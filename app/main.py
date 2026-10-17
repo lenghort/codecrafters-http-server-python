@@ -2,6 +2,7 @@ import argparse
 import os
 import socket  # noqa: F401
 import threading
+import gzip
 
 def handle_client(client_socket, directory):
     try:
@@ -40,22 +41,23 @@ def handle_client(client_socket, directory):
             encodings = [e.strip() for e in accept_encoding.split(",")]
             
             if "gzip" in encodings:
-                response = (
-                    f"HTTP/1.1 200 OK\r\n"
-                    f"Content-Encoding: gzip\r\n"
-                    f"Content-Type: text/plain\r\n"
-                    f"Content-Length: {len(echo_str)}\r\n\r\n"
-                    f"{echo_str}"
+                compressed_body = gzip.compress(echo_str.encode("utf-8"))
+                header_str = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Encoding: gzip\r\n"
+                    "Content-Type: text/plain\r\n"
+                    f"Content-Length: {len(compressed_body)}\r\n\r\n"
                 )
+                response = header_str.encode("utf-8") + compressed_body
             else:
                 response = (
                     f"HTTP/1.1 200 OK\r\n"
                     f"Content-Type: text/plain\r\n"
                     f"Content-Length: {len(echo_str)}\r\n\r\n"
                     f"{echo_str}"
-                )
+                ).encode("utf-8")
                 
-            client_socket.sendall(response.encode("utf-8"))
+            client_socket.sendall(response)
             
         elif path == "/user-agent":
             user_agent = headers.get("user-agent", "")
