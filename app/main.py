@@ -34,13 +34,27 @@ def handle_client(client_socket, directory):
             client_socket.sendall(b"HTTP/1.1 200 OK\r\n\r\n")
             
         elif path.startswith("/echo/"):
-            echo_str = path[len("/echo/"):]
-            response = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Type: text/plain\r\n"
-                f"Content-Length: {len(echo_str)}\r\n\r\n"
-                f"{echo_str}"
-            )
+            echo_str = path[len("/echo/") :]
+            
+            accept_encoding = headers.get("accept-encoding", "")
+            encodings = [e.strip() for e in accept_encoding.split(",")]
+            
+            if "gzip" in encodings:
+                response = (
+                    f"HTTP/1.1 200 OK\r\n"
+                    f"Content-Encoding: gzip\r\n"
+                    f"Content-Type: text/plain\r\n"
+                    f"Content-Length: {len(echo_str)}\r\n\r\n"
+                    f"{echo_str}"
+                )
+            else:
+                response = (
+                    f"HTTP/1.1 200 OK\r\n"
+                    f"Content-Type: text/plain\r\n"
+                    f"Content-Length: {len(echo_str)}\r\n\r\n"
+                    f"{echo_str}"
+                )
+                
             client_socket.sendall(response.encode("utf-8"))
             
         elif path == "/user-agent":
