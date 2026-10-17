@@ -5,24 +5,34 @@ import threading
 
 def handle_client(client_socket, directory):
     try:
-        request_data = client_socket.recv(1024).decode("utf-8")
+        request_data = client_socket.recv(4096)
         if not request_data:
             return
 
-        lines = request_data.split("\r\n")
+        parts = request_data.split(b"\r\n\r\n", 1)
+        header_part = parts[0].decode("utf-8", errors="ignore")
+        
+        lines = header_part.split("\r\n")
         request_line = lines[0]
-        path = request_line.split(" ")[1]
+        req_parts = request_line.split(" ")
+        if len(req_parts) < 2:
+            return
+            
+        method = req_parts[0]
+        path = req_parts[1]
 
         headers = {}
         for line in lines[1:]:
             if not line:
                 break
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
+            if ":" in line:
+                key, value = line.split(":", 1)
+                headers[key.strip().lower()] = value.strip()
 
         # Handle routes
         if path == "/":
             client_socket.sendall(b"HTTP/1.1 200 OK\r\n\r\n")
+            
         elif path.startswith("/echo/"):
             echo_str = path[len("/echo/"):]
             response = (
@@ -32,6 +42,7 @@ def handle_client(client_socket, directory):
                 f"{echo_str}"
             )
             client_socket.sendall(response.encode("utf-8"))
+            
         elif path == "/user-agent":
             user_agent = headers.get("user-agent", "")
             response = (
@@ -41,12 +52,19 @@ def handle_client(client_socket, directory):
                 f"{user_agent}"
             )
             client_socket.sendall(response.encode("utf-8"))
+            
         elif path.startswith("/files/"):
             filename = path[len("/files/"):]
-            if directory:
-                abs_dir = os.path.abspath(directory)
-                filepath = os.path.join(abs_dir, filename)
-        
+            if not directory:
+                client_socket.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
+                return
+                
+            abs_dir = os.path.abspath(directory)
+            os.makedirs(abs_dir, exist_ok=True)
+            filepath = os.path.join(abs_dir, filename)
+
+            # HANDLE GET /files/{filename}
+            if method == "GET":
                 if os.path.isfile(filepath):
                     with open(filepath, "rb") as f:
                         content = f.read()
@@ -54,12 +72,27 @@ def handle_client(client_socket, directory):
                     header = (
                         f"HTTP/1.1 200 OK\r\n"
                         f"Content-Type: application/octet-stream\r\n"
-                         f"Content-Length: {len(content)}\r\n\r\n"
+                        f"Content-Length: {len(content)}\r\n\r\n"
                     )
                     client_socket.sendall(header.encode("utf-8") + content)
-                    return
+                else:
+                    client_socket.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
 
-            client_socket.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
+            elif method == "POST":
+                content_length = int(headers.get("content-length", 0))
+                
+                body = parts[1] if len(parts) > 1 else b""
+                
+                while len(body) < content_length:
+                    remaining = content_length - len(body)
+                    body += client_socket.recv(remaining)
+
+                with open(filepath, "wb") as f:
+                    f.write(body[:content_length])
+
+                client_socket.sendall(b"HTTP/1.1 201 Created\r\n\r\n")
+            else:
+                client_socket.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
         else:
             client_socket.sendall(b"HTTP/1.1 404 Not Found\r\n\r\n")
     finally:
@@ -70,12 +103,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=str, default=None)
     args = parser.parse_args()
+    
     server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
 
-    # Loop continuously to accept multiple incoming connections
     while True:
         client_socket, address = server_socket.accept()
-        # Spawn a new thread for each connected client
         client_thread = threading.Thread(target=handle_client, args=(client_socket, args.directory))
         client_thread.start()
 
